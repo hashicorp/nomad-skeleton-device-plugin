@@ -42,6 +42,8 @@ exit-code
 *.iml
 
 nomad-skeleton-device-plugin
+skeleton-device
+launcher
 TODO.md
 
 ./idea

@@ -8,11 +8,6 @@ import (
 	"time"
 
 	log "github.com/hashicorp/go-hclog"
-	"github.com/hashicorp/nomad/devices/gpu/nvidia/nvml"
-	"github.com/hashicorp/nomad/helper"
-	"github.com/hashicorp/nomad/helper/uuid"
-	"github.com/hashicorp/nomad/plugins/shared/structs"
-
 	"github.com/hashicorp/nomad/plugins/base"
 	"github.com/hashicorp/nomad/plugins/device"
 	"github.com/hashicorp/nomad/plugins/shared/hclspec"
@@ -22,7 +17,7 @@ import (
 )
 
 const (
-	// pluginName is the name of the plugin
+	// pluginName is the deviceName of the plugin
 	// this is used for logging and (along with the version) for uniquely identifying
 	// plugin binaries fingerprinted by the client
 	pluginName = "skeleton-device"
@@ -54,14 +49,14 @@ var (
 	// as part of the client config:
 	//   https://www.nomadproject.io/docs/configuration/plugin.html
 	// options are here:
-	//
+	//   https://github.com/hashicorp/nomad/blob/v0.10.0/plugins/shared/hclspec/hcl_spec.proto
 	configSpec = hclspec.NewObject(map[string]*hclspec.Spec{
 		"some_optional_string_with_default": hclspec.NewDefault(
-			hclspec.NewAttr("", "string", false),
-			hclspec.NewLiteral("\"note the escaped quotes in this literal\""),
+			hclspec.NewAttr("some_optional_string_with_default", "string", false),
+			hclspec.NewLiteral("\"note the escaped quotes here\""),
 		),
-		"some_required_boolean": hclspec.NewAttr("", "bool", true),
-		"some_optional_list":    hclspec.NewAttr("", "list(number)", false),
+		"some_required_boolean": hclspec.NewAttr("some_required_boolean", "bool", true),
+		"some_optional_list":    hclspec.NewAttr("some_optional_list", "list(number)", false),
 		"fingerprint_period": hclspec.NewDefault(
 			hclspec.NewAttr("fingerprint_period", "string", false),
 			hclspec.NewLiteral("\"1m\""),
@@ -82,20 +77,20 @@ type Config struct {
 type SkeletonDevicePlugin struct {
 	logger log.Logger
 
-	// local copies of all of the config values that we need for operation
+	// these are local copies of the config values that we need for operation
 	someString   string
 	someBool     bool
 	someIntArray []int
 
 	// fingerprintPeriod the period for the fingerprinting loop
-	// most plugins that fingerprint in a polling loop will
-	// have
+	// most plugins that fingerprint in a polling loop will have this
 	fingerprintPeriod time.Duration
 
 	// devices is a list of fingerprinted devices
 	// most plugins will maintain, at least, a list of the devices that were
 	// discovered during fingerprinting.
-	devices    map[string]struct{}
+	// we'll save the "device name"/"model"
+	devices    map[string]string
 	deviceLock sync.RWMutex
 }
 
@@ -106,7 +101,7 @@ type SkeletonDevicePlugin struct {
 func NewPlugin(log log.Logger) *SkeletonDevicePlugin {
 	return &SkeletonDevicePlugin{
 		logger:  log.Named(pluginName),
-		devices: make(map[string]struct{}),
+		devices: make(map[string]string),
 	}
 }
 
@@ -118,7 +113,7 @@ func (d *SkeletonDevicePlugin) PluginInfo() (*base.PluginInfoResponse, error) {
 	return pluginInfo, nil
 }
 
-// ConfigSchema returns the plugins configuration schema.
+// ConfigSchema returns the configuration schema for the plugin.
 //
 // This is called during Nomad client startup, immediately before parsing
 // plugin config and calling SetConfig
@@ -135,17 +130,18 @@ func (d *SkeletonDevicePlugin) SetConfig(c *base.Config) error {
 		return err
 	}
 
-	// save the configuration to the receiver
+	// save the configuration to the plugin
 	// typically, we'll perform any additional validation or conversion
 	// from MsgPack base types
-	if config.SomeString != "some_acceptible_value" {
-		return fmt.Errorf("some_optional_string_with_default was not acceptible", "value", config.SomeString)
+	if config.SomeString == "" {
+		return fmt.Errorf("some_optional_string_with_default was not acceptible, cannot be empty",
+			"value", config.SomeString)
 	}
 	d.someString = config.SomeString
 	d.someBool = config.SomeBool
 	d.someIntArray = config.SomeIntArray
 
-	// for example, convert the poll period from a config string into a time.Duration
+	// for example, convert the poll period from an HCL string into a time.Duration
 	period, err := time.ParseDuration(config.FingerprintPeriod)
 	if err != nil {
 		return fmt.Errorf("failed to parse doFingerprint period %q: %v", config.FingerprintPeriod, err)
@@ -168,80 +164,15 @@ func (d *SkeletonDevicePlugin) Fingerprint(ctx context.Context) (<-chan *device.
 	return outCh, nil
 }
 
-type SkeletonDevice struct {
-	ID    string
-	model string
-}
-
-// doFingerprint is the long-running goroutine that detects device changes
-func (d *SkeletonDevicePlugin) doFingerprint(ctx context.Context, devices chan *device.FingerprintResponse) {
-	defer close(devices)
-
-	// Create a timer that will fire immediately for the first detection
-	ticker := time.NewTimer(0)
-
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case <-ticker.C:
-			ticker.Reset(d.fingerprintPeriod)
-		}
-
-		// The logic for fingerprinting devices and detecting the diffs
-		// will vary across devices.
-		//
-		// For this example, we'll create a few virtual devices on the first
-		// fingerprinting.
-		//
-		// Subsequent loops won't do anything, and theoretically, we could just exit
-		// this method. However, for non-trivial devices, fingerprinting is an on-going
-		// process, useful for detecting new devices and tracking the health of
-		// existing devices.
-		if len(d.devices) == 0 {
-			d.deviceLock.Lock()
-			defer d.deviceLock.Unlock()
-
-			// "discover" some devices
-			discoveredDevices := []SkeletonDevice{
-				{
-					ID:    uuid.Generate(),
-					model: "modelA",
-				},
-				{
-					ID:    uuid.Generate(),
-					model: "modelB",
-				},
-			}
-
-			// during fingerprinting, devices are grouped by "device group" in
-			// order to facilitate scheduling
-			// devices in the same device group should have the same
-			// Vendor, Type, and Name ("Model")
-			// Build Fingerprint response with computed groups and send it over the channel
-
-			// Group all FingerprintDevices by DeviceName attribute
-			deviceListByDeviceName := make(map[string][]*nvml.FingerprintDeviceData)
-			for _, device := range fingerprintDevices {
-				deviceName := device.DeviceName
-				if deviceName == nil {
-					// nvml driver was not able to detect device name. This kind
-					// of devices are placed to single group with 'notAvailable' name
-					notAvailableCopy := notAvailable
-					deviceName = &notAvailableCopy
-				}
-
-				deviceListByDeviceName[*deviceName] = append(deviceListByDeviceName[*deviceName], device)
-			}
-
-			// Build Fingerprint response with computed groups and send it over the channel
-			deviceGroups := make([]*device.DeviceGroup, 0, len(deviceListByDeviceName))
-			for groupName, devices := range deviceListByDeviceName {
-				deviceGroups = append(deviceGroups, deviceGroupFromFingerprintData(groupName, devices, commonAttributes))
-			}
-			devices <- device.NewFingerprint(deviceGroups...)
-		}
-	}
+// Stats streams statistics for the detected devices.
+// Messages should be emitted to the returned channel on the specified interval.
+func (d *SkeletonDevicePlugin) Stats(ctx context.Context, interval time.Duration) (<-chan *device.StatsResponse, error) {
+	// Similar to Fingerprint, Stats returns a channel. The recommended way of
+	// organizing a plugin is to pass that into a long-running goroutine and
+	// return the channel immediately.
+	outCh := make(chan *device.StatsResponse)
+	go d.doStats(ctx, outCh, interval)
+	return outCh, nil
 }
 
 type reservationError struct {
@@ -254,7 +185,7 @@ func (e *reservationError) Error() string {
 
 // Reserve returns information to the task driver on on how to mount the given devices.
 // It may also perform any device-specific orchestration necessary to prepare the device
-// for use.
+// for use. This is called in a pre-start hook on the client, before starting the workload.
 func (d *SkeletonDevicePlugin) Reserve(deviceIDs []string) (*device.ContainerReservation, error) {
 	if len(deviceIDs) == 0 {
 		return &device.ContainerReservation{}, nil
@@ -275,11 +206,20 @@ func (d *SkeletonDevicePlugin) Reserve(deviceIDs []string) (*device.ContainerRes
 		return nil, &reservationError{notExistingIDs}
 	}
 
+	// initialize the response
 	resp := &device.ContainerReservation{
 		Envs:    map[string]string{},
 		Mounts:  []*device.Mount{},
 		Devices: []*device.DeviceSpec{},
 	}
+
+	// Mounts are used to mount host volumes into a container that may include
+	// libraries, etc.
+	resp.Mounts = append(resp.Mounts, &device.Mount{
+		TaskPath: "/usr/lib/libsome-library.so",
+		HostPath: "/usr/lib/libprobably-some-fingerprinted-or-configured-library.so",
+		ReadOnly: true,
+	})
 
 	for i, id := range deviceIDs {
 		// Check if the device is known
@@ -287,21 +227,13 @@ func (d *SkeletonDevicePlugin) Reserve(deviceIDs []string) (*device.ContainerRes
 			return nil, status.Newf(codes.InvalidArgument, "unknown device %q", id).Err()
 		}
 
-		// Mounts are used to mount host volumes into a container that may include
-		// libraries, etc.
-		resp.Mounts = append(resp.Mounts, &device.Mount{
-			TaskPath: "/usr/lib/libsome-library.so",
-			HostPath: "/usr/lib/libprobably-some-fingerprinted-or-configured-library.so",
-			ReadOnly: true,
-		})
-
 		// Envs are a set of environment variables to set for the task.
 		resp.Envs[fmt.Sprintf("DEVICE_%d", i)] = id
 
 		// Devices are the set of devices to mount into the container.
 		resp.Devices = append(resp.Devices, &device.DeviceSpec{
 			// TaskPath is the location to mount the device in the task's file system.
-			TaskPath: fmt.Sprintf("/dev/dev%d", i),
+			TaskPath: fmt.Sprintf("/dev/skel%d", i),
 			// HostPath is the host location of the device.
 			HostPath: fmt.Sprintf("/dev/devActual"),
 			// CgroupPerms defines the permissions to use when mounting the device.
@@ -310,79 +242,4 @@ func (d *SkeletonDevicePlugin) Reserve(deviceIDs []string) (*device.ContainerRes
 	}
 
 	return resp, nil
-}
-
-// Stats streams statistics for the detected devices.
-// Messages should be emitted to the returned channel on the specified interval.
-func (d *SkeletonDevicePlugin) Stats(ctx context.Context, interval time.Duration) (<-chan *device.StatsResponse, error) {
-	// Similar to Fingerprint, Stats returns a channel. The recommended way of
-	// organizing a plugin is to pass that into a long-running goroutine and
-	// return the channel immediately.
-	outCh := make(chan *device.StatsResponse)
-	go d.doStats(ctx, outCh, interval)
-	return outCh, nil
-}
-
-// doStats is the long running goroutine that streams device statistics
-func (d *SkeletonDevicePlugin) doStats(ctx context.Context, stats chan *device.StatsResponse, interval time.Duration) {
-	defer close(stats)
-
-	// Create a timer that will fire immediately for the first detection
-	ticker := time.NewTimer(0)
-
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case <-ticker.C:
-			ticker.Reset(interval)
-		}
-
-		deviceStats, err := d.collectStats()
-		if err != nil {
-			stats <- &device.StatsResponse{
-				Error: err,
-			}
-			return
-		}
-		if deviceStats == nil {
-			continue
-		}
-
-		stats <- &device.StatsResponse{
-			Groups: []*device.DeviceGroupStats{deviceStats},
-		}
-	}
-}
-
-func (d *SkeletonDevicePlugin) collectStats() (*device.DeviceGroupStats, error) {
-	d.deviceLock.RLock()
-	defer d.deviceLock.RUnlock()
-	l := len(d.devices)
-	if l == 0 {
-		return nil, nil
-	}
-
-	now := time.Now()
-	group := &device.DeviceGroupStats{
-		Vendor:        vendor,
-		Type:          deviceType,
-		Name:          "some-model",
-		InstanceStats: make(map[string]*device.DeviceStats, l),
-	}
-
-	for name, num := range d.devices {
-		s := &device.DeviceStats{
-			Summary: &structs.StatValue{
-				IntNumeratorVal: helper.Int64ToPtr(num),
-				Desc:            "Number of uses",
-				Unit:            "uses",
-			},
-			Stats:     &structs.StatObject{},
-			Timestamp: now,
-		}
-		group.InstanceStats[name] = s
-	}
-
-	return group, nil
 }
