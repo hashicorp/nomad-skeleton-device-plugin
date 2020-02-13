@@ -12,19 +12,50 @@ Requirements
 ------------
 
 - [Nomad](https://www.nomadproject.io/downloads.html) 0.9+
-- [Go](https://golang.org/doc/install) 1.11 or later (to build the provider plugin)
+- [Go](https://golang.org/doc/install) 1.11 or later (to build the plugin)
 
 Building the Skeleton Plugin
 ---------------------
+[Generate](https://github.com/hashicorp/nomad-skeleton-device-plugin/generate)
+a new repository in your account from this template by clicking the `Use this
+template` button above.
 
-Clone the repository. This project uses [go modules](https://github.com/golang/go/wiki/Modules); you will need to
-set `GO111MODULE=on` (or `auto`, depending on your Go version and whether you are working inside your GOPATH).
+Clone the repository somewhere in your computer. This project uses
+[Go modules](https://blog.golang.org/using-go-modules) so you will need to set
+the environment variable `GO111MODULE=on` or work outside your `GOPATH` if it
+is set to `auto` or not declared.
 
 ```sh
-$ git clone git@github.com:hashicorp/nomad-skeleton-device-plugin.git
+$ git clone git@github.com:<ORG>/<REPO>git
 ```
 
-Enter the provider directory and build the skeleton provider:
+Enter the plugin directory and update the paths in `go.mod` and `main.go` to
+match your repository path.
+
+```diff
+// go.mod
+
+- module github.com/hashicorp/nomad-skeleton-device-plugin
++ module github.com/<ORG>/<REPO>
+...
+```
+
+```diff
+// main.go
+
+package main
+
+import (
+	log "github.com/hashicorp/go-hclog"
+	"github.com/hashicorp/nomad/plugins"
+
+-	"github.com/hashicorp/nomad-skeleton-device-plugin/device"
++ "github.com/<REPO>/<ORG>/device"
+)
+...
+```
+
+Build the skeleton plugin.
 
 ```sh
 $ make build
