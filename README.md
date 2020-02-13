@@ -46,11 +46,11 @@ match your repository path.
 package main
 
 import (
-	log "github.com/hashicorp/go-hclog"
-	"github.com/hashicorp/nomad/plugins"
+    log "github.com/hashicorp/go-hclog"
+    "github.com/hashicorp/nomad/plugins"
 
--	"github.com/hashicorp/nomad-skeleton-device-plugin/device"
-+ "github.com/<REPO>/<ORG>/device"
+-   "github.com/hashicorp/nomad-skeleton-device-plugin/device"
++   "github.com/<REPO>/<ORG>/device"
 )
 ...
 ```
