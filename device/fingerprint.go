@@ -4,7 +4,7 @@ import (
 	"context"
 	"time"
 
-	"github.com/hashicorp/nomad/helper"
+	"github.com/hashicorp/nomad/helper/pointer"
 	"github.com/hashicorp/nomad/helper/uuid"
 	"github.com/hashicorp/nomad/plugins/device"
 	"github.com/hashicorp/nomad/plugins/shared/structs"
@@ -119,11 +119,11 @@ func deviceGroupFromFingerprintData(groupName string, deviceList []*fingerprinte
 		// with different names.
 		Attributes: map[string]*structs.Attribute{
 			"attrA": {
-				Int:  helper.Int64ToPtr(1024),
+				Int:  pointer.Of(int64(1024)),
 				Unit: "MB",
 			},
 			"attrB": {
-				Float: helper.Float64ToPtr(10.5),
+				Float: pointer.Of(10.5),
 				Unit:  "MW",
 			},
 		},
